@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<title>Photos</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>📸 Photos</h1>
+  <div class="header-actions">
+    <span id="statsCompact" class="stats-compact">📷 -</span>
+    <input id="searchInput" class="search-input" type="text" placeholder="搜索图片..." oninput="onSearch(event)">
+    <button id="layoutToggle" class="icon-btn" onclick="toggleLayout()" title="切换布局">⊞</button>
+    <button id="darkToggle" class="icon-btn" onclick="toggleDark()" title="切换深色模式">🌙</button>
+    <button id="selectBtn" onclick="toggleSelectMode()">☐ 选择</button>
+    <button id="uploadBtn" onclick="document.getElementById('fileInput').click()">📤 上传</button>
+    <input type="file" id="fileInput" multiple accept="image/*" capture="environment" style="display:none">
+    <button id="logoutBtn" class="icon-btn" onclick="doLogout()" title="退出登录">🚪</button>
+  </div>
+</header>
+
+<!-- 分类过滤 -->
+<div id="categoryBar" class="category-bar">
+  <span class="cat-chip cat-active" data-cat="" onclick="filterCategory(this)">全部</span>
+</div>
+
+<!-- 排序栏 -->
+<div class="sort-bar">
+  <span class="sort-label">排序：</span>
+  <span class="sort-option sort-active" data-sort="created_desc" onclick="setSort('created_desc')">最新</span>
+  <span class="sort-option" data-sort="created_asc" onclick="setSort('created_asc')">最早</span>
+  <span class="sort-option" data-sort="name" onclick="setSort('name')">A-Z</span>
+  <span class="sort-option" data-sort="name_desc" onclick="setSort('name_desc')">Z-A</span>
+  <span class="sort-option" data-sort="size" onclick="setSort('size')">最大</span>
+  <span class="sort-option" data-sort="size_asc" onclick="setSort('size_asc')">最小</span>
+</div>
+
+<!-- 批量操作栏 -->
+<div id="batchBar" class="batch-bar" style="display:none">
+  <span id="selectedCount">已选 0 张</span>
+  <button id="recycleBatchRestoreBtn" class="batch-restore-btn" onclick="batchRestore()" style="display:none">↩ 恢复</button>
+  <button id="recycleBatchDeleteBtn" class="batch-permdelete-btn" onclick="batchPermanentDelete()" style="display:none">✗ 永久删除</button>
+  <button id="batchDownloadBtn" onclick="batchDownload()">⬇ 下载</button>
+  <button id="batchDeleteBtn" onclick="batchDelete()">🗑 删除</button>
+  <button id="batchMoveBtn" onclick="showMoveDialog()">📂 移动</button>
+  <button id="batchCancelBtn" onclick="toggleSelectMode()">取消</button>
+</div>
+
+<div id="uploadProgress" class="upload-progress" style="display:none">
+  <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+  <span id="progressText">0 / 0</span>
+</div>
+
+<!-- 拖拽上传提示 -->
+<div id="dropZone" class="drop-zone" style="display:none">📁 松开上传</div>
+
+<main id="grid" class="grid masonry"></main>
+<div id="loadMoreBar" class="load-more-bar" style="display:none">加载更多</div>
+
+<!-- 灯箱 -->
+<div id="lightbox" class="lightbox" style="display:none" onclick="closeLightbox(event)">
+  <button class="lb-nav lb-prev" onclick="event.stopPropagation(); navLightbox(-1)">‹</button>
+  <div class="lb-img-wrap" id="lbImgWrap">
+    <img id="lbImg" class="lb-img" alt="">
+  </div>
+  <button class="lb-nav lb-next" onclick="event.stopPropagation(); navLightbox(1)">›</button>
+  <div class="lb-bar">
+    <div class="lb-bar-left">
+      <button class="lb-info-btn" onclick="event.stopPropagation(); toggleInfo()">ℹ️</button>
+      <span id="lbCounter"></span>
+      <span id="zoomHint" class="zoom-hint">滚轮缩放 · 拖动平移</span>
+    </div>
+    <div class="lb-bar-center">
+      <input id="lbFilename" class="lb-filename" onblur="renameImage()" onkeydown="if(event.key==='Enter')this.blur()">
+      <span id="lbDate"></span>
+    </div>
+    <div class="lb-bar-right">
+        <button class="lb-original-btn" id="lbOriginalBtn" onclick="event.stopPropagation(); viewOriginal()">🔍 原图</button>
+        <button class="lb-download" onclick="event.stopPropagation(); downloadImage()">⬇</button>
+      <button class="lb-delete" onclick="event.stopPropagation(); deleteImage()">🗑</button>
+    </div>
+  </div>
+  <button class="lb-close" onclick="event.stopPropagation(); closeLightbox()">✕</button>
+</div>
+
+<!-- 信息面板 -->
+<div id="infoPanel" class="info-panel" style="display:none" onclick="event.stopPropagation()">
+  <div class="info-panel-header">
+    <span>详细信息</span>
+    <button class="info-panel-close" onclick="toggleInfo()">✕</button>
+  </div>
+  <div class="info-panel-body" id="infoPanelBody"></div>
+</div>
+
+<!-- 移动弹窗 -->
+<div id="moveDialog" class="modal-overlay" style="display:none" onclick="closeMoveDialog(event)">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-title">移动到分类</div>
+    <div id="moveCatList" class="modal-list"></div>
+    <button class="modal-close-btn" onclick="closeMoveDialog()">取消</button>
+  </div>
+</div>
+
+<!-- 登录弹窗 -->
+<div id="loginOverlay" class="login-overlay">
+  <div class="login-box">
+    <div class="login-title">📸 Photos</div>
+    <input id="loginPass" class="login-input" type="password" placeholder="输入密码" onkeydown="if(event.key==='Enter')doLogin()" autofocus>
+    <div id="loginError" class="login-error" style="display:none">密码错误</div>
+    <button class="login-btn" onclick="doLogin()">登录</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="app.js"></script>
+
+<!-- 右侧滚动进度条 -->
+<div class="scroll-progress" id="scrollProgress">
+  <div class="sp-track" id="spTrack">
+    <div class="sp-thumb" id="spThumb"></div>
+  </div>
+  <div class="sp-dots" id="spDots"></div>
+  <button class="sp-top" id="spTop" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="回到顶部">↑</button>
+</div>
+</body>
+</html>
