@@ -574,28 +574,118 @@ async function uploadFiles(files) {
   const progress = document.getElementById("uploadProgress");
   const pFill = document.getElementById("progressFill"), pText = document.getElementById("progressText");
   progress.style.display = "flex";
-  let dupes = [];
-  for (let i = 0; i < files.length; i++) {
-    let ok = false, isDup = false;
+  const CONCURRENCY = 3;
+  const TIMEOUT_MS = 60000;
+  let dupes = [], failedDetails = [];
+  let totalBytes = 0, loadedBytes = 0, completed = 0;
+  for (const f of files) totalBytes += f.size;
+
+  function setBar() {
+    if (totalBytes > 0) {
+      pFill.style.width = Math.min(100, (loadedBytes / totalBytes * 100)).toFixed(1) + "%";
+    }
+  }
+
+  async function prepFile(file) {
     try {
-      const [sha256, thumb, medium, size] = await Promise.all([computeFileHash(files[i]), generateThumbnail(files[i]), generateMedium(files[i]), getImageSize(files[i])]);
+      const [sha256, thumb, medium, size] = await Promise.all([
+        computeFileHash(file), generateThumbnail(file), generateMedium(file), getImageSize(file)
+      ]);
       const fd = new FormData();
-      fd.append("file", files[i]);
-      fd.append("filename", files[i].name);
+      fd.append("file", file);
+      fd.append("filename", file.name);
       fd.append("sha256", sha256);
       if (currentCategory) fd.append("category_id", currentCategory);
       if (thumb) fd.append("thumb", thumb, "thumb.jpg");
       if (medium) fd.append("medium", medium, "medium.webp");
       if (size) { fd.append("width", size.width.toString()); fd.append("height", size.height.toString()); }
-      const r = await fetch(API_BASE + "/api/upload", { method: "POST", body: fd, credentials: "include" });
-      if (r.ok) { ok = true; }
-      else if (r.status === 409) { isDup = true; dupes.push(files[i].name); }
-    } catch (e) { }
-    pFill.style.width = ((i + 1) / files.length * 100) + "%";
-    pText.textContent = isDup ? "⏭ " + files[i].name.slice(0, 20) + " 已存在" : (ok ? (i + 1) + " / " + files.length : "✗ " + files[i].name.slice(0, 20) + " 失败");
+      return { file, fd, size: file.size };
+    } catch (e) {
+      console.error("预处理失败:", file.name, e);
+      failedDetails.push(file.name + ": prep failed: " + (e.message || String(e)));
+      completed++;
+      return null;
+    }
   }
+
+  function uploadOne(item) {
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.timeout = TIMEOUT_MS;
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const cur = loadedBytes + e.loaded - item.uploadedSoFar;
+          item.uploadedSoFar = e.loaded;
+          loadedBytes = cur;
+          setBar();
+          pText.textContent = Math.round(loadedBytes / 1024 / 1024 * 10) / 10 + "MB / " + Math.round(totalBytes / 1024 / 1024 * 10) / 10 + "MB - " + item.file.name.slice(0, 20);
+        }
+      };
+      xhr.onload = () => {
+        loadedBytes = loadedBytes - item.uploadedSoFar + item.file.size;
+        item.uploadedSoFar = item.file.size;
+        completed++;
+        setBar();
+        if (xhr.status >= 200 && xhr.status < 300) {
+          pText.textContent = completed + " / " + files.length + " - " + item.file.name.slice(0, 20);
+          resolve();
+        } else if (xhr.status === 409) {
+          dupes.push(item.file.name);
+          pText.textContent = "⏭ " + item.file.name.slice(0, 20) + " 已存在";
+          resolve();
+        } else {
+          failedDetails.push(item.file.name + ": HTTP " + xhr.status + " " + xhr.statusText);
+          pText.textContent = "✗ " + item.file.name.slice(0, 20) + " 失败";
+          resolve();
+        }
+      };
+      xhr.onerror = () => {
+        loadedBytes = loadedBytes - item.uploadedSoFar + item.file.size;
+        item.uploadedSoFar = item.file.size;
+        completed++;
+        setBar();
+        failedDetails.push(item.file.name + ": network error");
+        pText.textContent = "✗ " + item.file.name.slice(0, 20) + " 失败";
+        resolve();
+      };
+      xhr.ontimeout = () => {
+        loadedBytes = loadedBytes - item.uploadedSoFar + item.file.size;
+        item.uploadedSoFar = item.file.size;
+        completed++;
+        setBar();
+        failedDetails.push(item.file.name + ": timeout " + (TIMEOUT_MS / 1000) + "s");
+        pText.textContent = "✗ " + item.file.name.slice(0, 20) + " 超时";
+        resolve();
+      };
+      xhr.open("POST", API_BASE + "/api/upload");
+      xhr.send(item.fd);
+    });
+  }
+
+  async function pool(items, n, worker) {
+    let i = 0;
+    const next = async () => {
+      const idx = i++;
+      if (idx >= items.length) return;
+      await worker(items[idx]);
+      await next();
+    };
+    await Promise.all(Array.from({ length: n }, next));
+  }
+
+  pText.textContent = "准备 " + files.length + " 张...";
+  setBar();
+  const prepped = (await Promise.all(files.map(prepFile))).filter(p => p !== null);
+  const items = prepped.map(p => ({ file: p.file, fd: p.fd, size: p.size, uploadedSoFar: 0 }));
+  pText.textContent = "开始上传 " + items.length + " 张 (并发 " + CONCURRENCY + ")...";
+  await pool(items, CONCURRENCY, uploadOne);
+
   progress.style.display = "none";
-  if (dupes.length) alert("以下图片已存在，已跳过：\n" + dupes.join("\n"));
+  let msgs = [];
+  if (dupes.length) msgs.push("以下文件已存在，已跳过：\n" + dupes.join("\n"));
+  if (failedDetails.length) msgs.push("以下文件上传失败：\n" + failedDetails.join("\n"));
+  if (msgs.length) alert(msgs.join("\n\n"));
   selectedIds.clear();
   loadList(true);
 }
