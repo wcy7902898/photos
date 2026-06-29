@@ -792,10 +792,10 @@ async function sha256(str) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
-function computeFileHash(file) {
-  return crypto.subtle.digest("SHA-256", file).then(buf =>
-    Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("")
-  );
+async function computeFileHash(file) {
+  // Safari requires BufferSource (ArrayBuffer / TypedArray); File/Blob 不会被接受
+  const buf = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 async function doLogin() {
   const pass = document.getElementById("loginPass").value;
